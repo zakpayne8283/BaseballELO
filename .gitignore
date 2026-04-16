@@ -1,4 +1,10 @@
 .venv/
 data/
 
+__pycache__/
+
 *.pyc
+
+matchups.csv
+pitcher_ratings_v1.csv
+batter_ratings_v1.csv
