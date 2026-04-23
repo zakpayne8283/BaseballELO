@@ -140,7 +140,7 @@ def main():
             df.at[index, 'pitcher_rating_post'] = pitcher['rating']
 
         # Create/Append CSV out
-        df.to_csv('matchups.csv', mode='a', header=(not os.path.exists('matchups.csv')), index=False)
+        df.to_csv('matchups_v1_0.csv', mode='a', header=(not os.path.exists('matchups_v1_0.csv')), index=False)
 
         print(f'Processed {year}')
 
