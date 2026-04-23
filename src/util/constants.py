@@ -25,3 +25,14 @@ NEEDED_COLUMNS: list[str] = [
     "xi",
     "roe",
 ]
+
+OUTPUT_COLUMNS = [
+    'gid',
+    'batter',
+    'pitcher',
+    'pa_result',
+    'batter_rating_pre',
+    'batter_rating_post',
+    'pitcher_rating_pre',
+    'pitcher_rating_post'
+]

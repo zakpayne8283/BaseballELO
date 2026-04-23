@@ -9,13 +9,14 @@ import pyarrow.compute as pa_comp
 import pyarrow.csv as pa_csv
 
 from src.util.retrosheet import Retrosheet
-from src.util.run_expectancy import create_run_expectancy_dataframes
-from src.util.woba import create_woba_dataframes, normalize_woba_coeffs
+from src.util.stats import re
+from src.util.stats.woba import create_woba_dataframes, normalize_woba_coeffs
 
-from src.util.constants import NEEDED_COLUMNS
-from src.util.player_record import PlayerRecord
+from src.util.constants import NEEDED_COLUMNS, OUTPUT_COLUMNS
+from src.util.common.player_record import PlayerRecord
+from src.util.common.league_context import LeagueContext
 from src.util.helpers import get_pa_result
-from src.util.structs import OutcomeMap, RatingsStore
+from src.util.common.structs import OutcomeMap, RatingsStore
 
 class BaseModel(ABC):
     """
@@ -54,6 +55,7 @@ class BaseModel(ABC):
 
         self._batters: RatingsStore = {}
         self._pitchers: RatingsStore = {}
+        self._league_contexts: dict[LeagueContext] = {}
         self._retrosheet = Retrosheet()
 
     @abstractmethod
@@ -94,39 +96,44 @@ class BaseModel(ABC):
             - ``batter_ratings_<name>.csv``
             - ``pitcher_ratings_<name>.csv``
         """
-        raw_table = self._load_raw_data()
+        # Raw Table of PyArrow loaded CSV
+        raw_table = self._load_raw_retrosheet_data()
 
-        matchups_path = f"matchups_{self.name}.csv"
+        matchups_file_path = f"matchups_{self.name}.csv"
         # Start fresh each run so we don't append to a stale file.
-        if os.path.exists(matchups_path):
-            os.remove(matchups_path)
+        if os.path.exists(matchups_file_path):
+            os.remove(matchups_file_path)
 
         for year in years:
             print("-" * 15)
             print(f"Processing {year}…")
             print("-" * 15)
 
+            # Pandas DF for that specific `year`
             df_year = self._filter_year(raw_table, year)
-            if df_year.empty:
+            if df_year.empty or df_year is None:
                 print(f"  No data for {year}, skipping.")
                 continue
 
-            df_rated = self._process_year(df_year)
+            # Run the model for that year
+            # TODO: Make running year-by-year optional?
+            df_rated = self._process_year(df_year, year)
 
+            df_rated = df_rated[OUTPUT_COLUMNS]
+
+            # Append to the matchups output
             df_rated.to_csv(
-                matchups_path,
+                matchups_file_path,
                 mode="a",
-                header=not os.path.exists(matchups_path),
+                header=not os.path.exists(matchups_file_path),
                 index=False,
             )
             print(f"  Done — {len(df_rated):,} plate appearances.")
 
-        self._save_ratings()
 
-
-    def _load_raw_data(self) -> Any:
+    def _load_raw_retrosheet_data(self) -> Any:
         """Download Retrosheet data and return a PyArrow Table."""
-        self._retrosheet.fetch_retrosheet_data_by_years()
+        self._retrosheet.fetch_all_retrosheet_data()
         convert_options = pa_csv.ConvertOptions(include_columns=NEEDED_COLUMNS)
         return pa_csv.read_csv(
             os.path.join(self._retrosheet.plays_dir, "plays.csv"),
@@ -136,7 +143,9 @@ class BaseModel(ABC):
 
     def _filter_year(self, table: Any, year: int) -> pd.DataFrame:
         """Return a pandas DataFrame containing only regular-season PAs for *year*."""
+        # Slice year from GID
         sliced = pa_comp.utf8_slice_codeunits(table["gid"], start=3, stop=7)
+        # Apply mask to slice
         mask = pa_comp.and_(
             pa_comp.equal(sliced, str(year)),
             pa_comp.equal(table["gametype"], "regular"),
@@ -145,7 +154,9 @@ class BaseModel(ABC):
     
 
     def _prepare_year_dataframe(
-        self, df: pd.DataFrame
+        self,
+        df: pd.DataFrame,
+        year: int
     ) -> tuple[pd.DataFrame, OutcomeMap, float]:
         """
         Apply helper transforms and compute league-level values.
@@ -164,20 +175,24 @@ class BaseModel(ABC):
         df["pa_result"] = df.apply(get_pa_result, axis=1)
         df = df.loc[df["pa_result"].notna()].copy()
 
-        # TODO: Just make RE24, wOBA, and normalized wOBA into their own CSV files
-        #       so each year doesn't need to compute each run
-        df, re_matrix = create_run_expectancy_dataframes(df)
+        # Compute & Apply Run Expectancy Numbers
+        re_matrix = re.compute_run_expectancy_matrix(df)
+        df = re.apply_run_expectancy_columns(df, re_matrix)
+
+
         df, woba_coeffs = create_woba_dataframes(df, re_matrix)
         outcomes, league_average = normalize_woba_coeffs(df, woba_coeffs)
+
+        self._league_contexts[year] = LeagueContext(re_matrix, outcomes, league_average)
 
         return df, outcomes, league_average
     
 
-    def _process_year(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _process_year(self, df: pd.DataFrame, year: int) -> pd.DataFrame:
         """
         Iterate over every PA, update ratings, and return the annotated DataFrame.
         """
-        df, outcomes, league_average = self._prepare_year_dataframe(df)
+        df, outcomes, league_average = self._prepare_year_dataframe(df, year)
 
         # Pre-allocate rating columns
         df["batter_rating_pre"] = pd.NA
@@ -219,39 +234,3 @@ class BaseModel(ABC):
         if player_id not in store:
             store[player_id] = PlayerRecord(rating=self.initial_rating)
         return store[player_id]
-
-    # ------------------------------------------------------------------
-    # Output
-    # ------------------------------------------------------------------
-
-    def _save_ratings(self) -> None:
-        """Write final batter and pitcher rating CSVs and print top-10 leaders."""
-        min_instances = 100
-
-        b_df = pd.DataFrame(
-            {"rating": r.rating, "instances": r.instances}
-            for r in self._batters.values()
-        )
-        b_df.index = pd.Index(self._batters.keys(), name="batter_id")
-        b_path = f"batter_ratings_{self.name}.csv"
-        b_df.sort_values("rating", ascending=False).to_csv(b_path)
-        print(f"\nTop batters (≥{min_instances} PA) saved to {b_path}:")
-        print(
-            b_df.loc[b_df["instances"] >= min_instances]
-            .sort_values("rating", ascending=False)
-            .head(10)
-        )
-
-        p_df = pd.DataFrame(
-            {"rating": r.rating, "instances": r.instances}
-            for r in self._pitchers.values()
-        )
-        p_df.index = pd.Index(self._pitchers.keys(), name="pitcher_id")
-        p_path = f"pitcher_ratings_{self.name}.csv"
-        p_df.sort_values("rating", ascending=False).to_csv(p_path)
-        print(f"\nTop pitchers (≥{min_instances} BF) saved to {p_path}:")
-        print(
-            p_df.loc[p_df["instances"] >= min_instances]
-            .sort_values("rating", ascending=False)
-            .head(10)
-        )

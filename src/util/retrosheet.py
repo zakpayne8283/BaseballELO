@@ -53,6 +53,9 @@ class Retrosheet:
 
         print(f'Extracted {year} plays zip')
 
+    def fetch_all_retrosheet_data(self):
+        self.fetch_retrosheet_data_by_years()
+
     def fetch_retrosheet_data_by_years(self, years=None):
         self.create_directories()
 

@@ -1,4 +1,4 @@
-from src.util.base_model import BaseModel
+from src.util.common.base_model import BaseModel
 
 
 class Model1_0(BaseModel):
