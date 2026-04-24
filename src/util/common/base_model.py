@@ -10,13 +10,15 @@ import pyarrow.csv as pa_csv
 
 from src.util.retrosheet import Retrosheet
 from src.util.stats import re
-from src.util.stats.woba import create_woba_dataframes, normalize_woba_coeffs
+from src.util.stats import woba
 
 from src.util.constants import NEEDED_COLUMNS, OUTPUT_COLUMNS
 from src.util.common.player_record import PlayerRecord
 from src.util.common.league_context import LeagueContext
 from src.util.helpers import get_pa_result
-from src.util.common.structs import OutcomeMap, RatingsStore
+from src.util.common.structs import CoefficientsMap, RatingsStore
+
+from dataclasses import asdict
 
 class BaseModel(ABC):
     """
@@ -41,9 +43,6 @@ class BaseModel(ABC):
     #: Initial ELO for unseen player
     initial_rating: float
 
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     def __init__(self) -> None:
         # Require subclasses implement:
@@ -93,13 +92,12 @@ class BaseModel(ABC):
 
         Outputs two files per run:
             - ``matchups_<name>.csv``     — every PA with pre/post ratings
-            - ``batter_ratings_<name>.csv``
-            - ``pitcher_ratings_<name>.csv``
         """
         # Raw Table of PyArrow loaded CSV
         raw_table = self._load_raw_retrosheet_data()
 
-        matchups_file_path = f"matchups_{self.name}.csv"
+        matchups_file_path  = f"matchups_{self.name}.csv"
+        league_context_path = 'league_contexts.csv'
         # Start fresh each run so we don't append to a stale file.
         if os.path.exists(matchups_file_path):
             os.remove(matchups_file_path)
@@ -130,6 +128,10 @@ class BaseModel(ABC):
             )
             print(f"  Done — {len(df_rated):,} plate appearances.")
 
+        # Write the league contexts
+        df_lg_cxt = pd.DataFrame([asdict(cxt) for cxt in self._league_contexts.values()])
+        df_lg_cxt.to_csv(league_context_path, header=True)
+
 
     def _load_raw_retrosheet_data(self) -> Any:
         """Download Retrosheet data and return a PyArrow Table."""
@@ -157,7 +159,7 @@ class BaseModel(ABC):
         self,
         df: pd.DataFrame,
         year: int
-    ) -> tuple[pd.DataFrame, OutcomeMap, float]:
+    ) -> tuple[pd.DataFrame, CoefficientsMap, float]:
         """
         Apply helper transforms and compute league-level values.
 
@@ -179,13 +181,23 @@ class BaseModel(ABC):
         re_matrix = re.compute_run_expectancy_matrix(df)
         df = re.apply_run_expectancy_columns(df, re_matrix)
 
+        # Compute, Apply, & Normalize wOBA Coefficients
+        df = woba.apply_woba_columns(df, re_matrix)
+        woba_coeffs = woba.compute_woba_coefficients(df)
+        normal_coeffs = woba.normalize_woba_coeffs(woba_coeffs)
 
-        df, woba_coeffs = create_woba_dataframes(df, re_matrix)
-        outcomes, league_average = normalize_woba_coeffs(df, woba_coeffs)
+        if 're_diff' not in df:
+            raise ValueError(f'Cannot compute Average ELO coefficient: missing column `re_diff`')
 
-        self._league_contexts[year] = LeagueContext(re_matrix, outcomes, league_average)
+        # Get the league's average 
+        pa_result_proportions = df['pa_result'].value_counts(normalize=True).to_dict()
+        league_average = sum(
+            normal_coeffs[k] * v for k, v in pa_result_proportions.items()
+        )
 
-        return df, outcomes, league_average
+        self._league_contexts[year] = LeagueContext(re_matrix, woba_coeffs, normal_coeffs, league_average)
+        
+        return df, normal_coeffs, league_average
     
 
     def _process_year(self, df: pd.DataFrame, year: int) -> pd.DataFrame:
@@ -224,6 +236,11 @@ class BaseModel(ABC):
 
             df.at[index, "batter_rating_post"] = batter.rating
             df.at[index, "pitcher_rating_post"] = pitcher.rating
+
+        df['batter_rating_pre'] = df['batter_rating_pre'].round(3)
+        df['batter_rating_post'] = df['batter_rating_post'].round(3)
+        df['pitcher_rating_pre'] = df['pitcher_rating_pre'].round(3)
+        df['pitcher_rating_post'] = df['pitcher_rating_post'].round(3)
 
         return df
 

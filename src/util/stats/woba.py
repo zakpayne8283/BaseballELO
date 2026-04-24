@@ -1,36 +1,46 @@
+import pandas as pd
 
-def create_woba_dataframes(df_re, re_matrix):
+
+def normalize_woba_coeffs(woba_coeffs):
     """
-    Calculate the wOBA coefficients for a year given two dataframes:
-    df_re: dataframe used to calculate run expectancy matrix
-    re_matrix: dataframe of run expectancy matrix for that year
+    Normalizes the wOBA values on a 0-1 scale
     """
-    
-    for column in ['re_state_pre', 're_state_post']:
-        if not column in df_re:
-            raise Exception(f'Cannot calculate wOBA coefficients: missing column {column}')
-        
-    if len(df_re[df_re['re_state_post'] > 24]) > 0:
-        print(df_re[df_re['re_state_post'] > 24])
-        raise Exception(f'Error: invalid RE states!')
-
-    df_re['re_pre']  = df_re.apply(lambda row: re_matrix[row['re_state_pre']], axis=1)
-    df_re['re_post'] = df_re.apply(lambda row: 0 + row['runs'] if row['re_state_post'] == 24 else re_matrix[row['re_state_post']] + row['runs'], axis=1)
-    df_re['re_diff'] = df_re['re_post'] - df_re['re_pre']
-    return df_re, df_re.groupby('pa_result')['re_diff'].mean().to_dict()
-
-def normalize_woba_coeffs(df_re, woba_coeffs):
     w_min = min(woba_coeffs.values())
     w_max = max(woba_coeffs.values())
-    outcomes = {
-            k: (v - w_min) / (w_max - w_min)
-            for k, v in woba_coeffs.items()
+    normal_coeffs = {
+            k: (v - w_min) / (w_max - w_min) for k, v in woba_coeffs.items()
         }
 
-    lg_avg_pa_mix = df_re['pa_result'].value_counts(normalize=True).to_dict()
+    return normal_coeffs
 
-    league_average = sum(
-        outcomes[k] * v for k, v in lg_avg_pa_mix.items()
-    )
 
-    return outcomes, league_average
+def apply_woba_columns(df: pd.DataFrame, re_matrix: pd.Series) -> pd.DataFrame:
+    """
+    Adds re_pre, re_post, and re_diff columns to df.
+    Requires re_state_pre and re_state_post to already be present.
+    """
+    for column in ['re_state_pre', 're_state_post']:
+        if column not in df:
+            raise ValueError(f'Cannot apply wOBA columns: missing column {column}')
+
+    if (df['re_state_post'] > 24).any():
+        raise ValueError(f'Cannot apply wOBA columns: invalid re_state_post values\n{df[df["re_state_post"] > 24]}')
+
+    df = df.copy()
+    df['re_pre']  = df['re_state_pre'].map(re_matrix)
+    df['re_post'] = df['re_state_post'].map(re_matrix).fillna(0) + df['runs']
+    df['re_diff'] = df['re_post'] - df['re_pre']
+
+    return df
+
+
+def compute_woba_coefficients(df: pd.DataFrame) -> dict[str, float]:
+    """
+    Computes wOBA coefficients as mean RE diff per PA outcome.
+    Requires re_diff and pa_result columns to already be present.
+    """
+    for column in ['re_diff', 'pa_result']:
+        if column not in df:
+            raise ValueError(f'Cannot compute wOBA coefficients: missing column {column}')
+
+    return df.groupby('pa_result')['re_diff'].mean().to_dict()

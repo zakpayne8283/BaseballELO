@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 
 matchups*.csv
+league_contexts.csv

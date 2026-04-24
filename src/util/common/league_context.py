@@ -1,10 +1,11 @@
 import pandas as pd
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from src.util.common.structs import OutcomeMap
+from src.util.common.structs import CoefficientsMap
 
 @dataclass
 class LeagueContext:
     re_matrix: pd.DataFrame
-    outcomes: OutcomeMap
+    woba_coeffs: CoefficientsMap
+    normal_coeffs: CoefficientsMap
     league_average: float
