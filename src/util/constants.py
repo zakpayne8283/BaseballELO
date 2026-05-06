@@ -24,6 +24,7 @@ NEEDED_COLUMNS: list[str] = [
     "k",
     "xi",
     "roe",
+    'iw'
 ]
 
 OUTPUT_COLUMNS = [

@@ -4,6 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pyarrow.compute as pa_comp
 import pyarrow.csv as pa_csv
@@ -207,40 +208,42 @@ class BaseModel(ABC):
         df, outcomes, league_average = self._prepare_year_dataframe(df, year)
 
         # Pre-allocate rating columns
-        df["batter_rating_pre"] = pd.NA
-        df["batter_rating_post"] = pd.NA
-        df["pitcher_rating_pre"] = pd.NA
-        df["pitcher_rating_post"] = pd.NA
+        n = len(df)
+        batter_rating_pre  = np.empty(n)
+        batter_rating_post = np.empty(n)
+        pitcher_rating_pre  = np.empty(n)
+        pitcher_rating_post = np.empty(n)
 
-        for index, row in df.iterrows():
-            batter = self._get_or_create_player(self._batters, row["batter"])
-            pitcher = self._get_or_create_player(self._pitchers, row["pitcher"])
+        actuals = df["pa_result"].map(outcomes).to_numpy()
 
-            actual: float = outcomes[row["pa_result"]]
+        for index, row in enumerate(df.itertuples(index=False)):
+            batter = self._get_or_create_player(self._batters, row.batter)
+            pitcher = self._get_or_create_player(self._pitchers, row.pitcher)
 
             batter_delta, pitcher_delta = self.compute_rating_update(
                 batter_rating=batter.rating,
                 pitcher_rating=pitcher.rating,
-                actual=actual,
+                actual=actuals[index],
                 league_average=league_average,
             )
 
-            df.at[index, "batter_rating_pre"] = batter.rating
-            df.at[index, "pitcher_rating_pre"] = pitcher.rating
+            batter_rating_pre[index]  = batter.rating
+            pitcher_rating_pre[index] = pitcher.rating
 
-            batter.rating += batter_delta
+            batter.rating  += batter_delta
             batter.instances += 1
-
             pitcher.rating += pitcher_delta
             pitcher.instances += 1
 
-            df.at[index, "batter_rating_post"] = batter.rating
-            df.at[index, "pitcher_rating_post"] = pitcher.rating
+            batter_rating_post[index]  = batter.rating
+            pitcher_rating_post[index] = pitcher.rating
 
-        df['batter_rating_pre'] = df['batter_rating_pre'].round(3)
-        df['batter_rating_post'] = df['batter_rating_post'].round(3)
-        df['pitcher_rating_pre'] = df['pitcher_rating_pre'].round(3)
-        df['pitcher_rating_post'] = df['pitcher_rating_post'].round(3)
+        df = df.assign(
+            batter_rating_pre=batter_rating_pre.round(3),
+            batter_rating_post=batter_rating_post.round(3),
+            pitcher_rating_pre=pitcher_rating_pre.round(3),
+            pitcher_rating_post=pitcher_rating_post.round(3)
+        )
 
         return df
 
