@@ -1,4 +1,7 @@
+import pandas as pd
+
 from src.util.common.base_model import BaseModel
+from src.util.common.player_record import PlayerRecord
 
 
 class Model1_0(BaseModel):
@@ -20,31 +23,49 @@ class Model1_0(BaseModel):
 
     name: str = "v1.0"
     initial_rating: float = 1500.0
-    k: float = 20.0
+    max_k: float = 20.0
+    min_k: float = 20.0
+    max_confidence: float = 1.0
+    min_confidence: float = 1.0
 
-    def __init__(self, k: float = 20.0) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.k = k
 
+
+    def calc_certainty(
+        self,
+        row: tuple,
+        df: pd.DataFrame
+    ) -> tuple[float, float]:
+        return self.max_confidence, self.max_confidence
+        
+        
+    def add_additional_columns(
+        self,
+        df: pd.DataFrame
+    ) -> pd.DataFrame:
+        return df
 
     def compute_rating_update(
         self,
-        batter_rating: float,
-        pitcher_rating: float,
+        batter: PlayerRecord,
+        batter_confidence: float,
+        pitcher: PlayerRecord,
+        pitcher_confidence: float,
         actual: float,
-        league_average: float,
-    ) -> tuple[float, float]:
+        league_average: float
+    ) -> tuple[float, float, float, float]:
         """
         Return ``(batter_delta, pitcher_delta)`` for one plate appearance.
 
         The exchange is zero-sum: every point gained by the batter is lost
         by the pitcher and vice versa.
         """
-        elo_win_prob: float = 1.0 / (1.0 + 10.0 ** ((pitcher_rating - batter_rating) / 400.0))
+        elo_win_prob: float = 1.0 / (1.0 + 10.0 ** ((pitcher.rating - batter.rating) / 400.0))
         expected: float = league_average + (elo_win_prob - 0.5) * 2.0 * league_average
 
-        batter_delta: float = self.k * (actual - expected)
-        pitcher_delta: float = self.k * ((1.0 - actual) - (1.0 - expected))  # == -batter_delta
+        batter_delta: float = self.max_k * (actual - expected)
+        pitcher_delta: float = self.max_k * ((1.0 - actual) - (1.0 - expected))
 
-        return batter_delta, pitcher_delta
+        return batter_delta, pitcher_delta, self.max_k, self.max_k
 

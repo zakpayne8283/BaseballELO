@@ -43,11 +43,19 @@ class BaseModel(ABC):
     name: str
     #: Initial ELO for unseen player
     initial_rating: float
+    #: Max K value for adjusting ratings
+    max_k: float
+    # Min K
+    min_k: float
+    # Max Confidence for computing K
+    max_confidence: float
+    # Min Confidence
+    min_confidence: float
 
 
     def __init__(self) -> None:
         # Require subclasses implement:
-        for attr in ("name", "initial_rating"):
+        for attr in ('name', 'initial_rating', 'max_k', 'min_k', 'max_confidence', 'min_confidence'):
             if not hasattr(self, attr):
                 raise NotImplementedError(
                     f"{type(self).__name__} must define class attribute '{attr}'"
@@ -61,11 +69,13 @@ class BaseModel(ABC):
     @abstractmethod
     def compute_rating_update(
         self,
-        batter_rating: float,
-        pitcher_rating: float,
+        batter: PlayerRecord,
+        batter_confidence: float,
+        pitcher: PlayerRecord,
+        pitcher_confidence: float,
         actual: float,
-        league_average: float,
-    ) -> tuple[float, float]:
+        league_average: float
+    ) -> tuple[float, float, float, float]:
         """
         Compute the rating *deltas* for one plate appearance.
 
@@ -86,6 +96,29 @@ class BaseModel(ABC):
             ``(batter_delta, pitcher_delta)`` — signed rating changes to apply.
         """
 
+    @abstractmethod
+    def add_additional_columns(
+        self,
+        df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        """
+
+    @abstractmethod
+    def calc_certainty(
+        self,
+        row: tuple,
+        df: pd.DataFrame
+    ) -> tuple[float, float]:
+        """
+        Docstring for calc_certainty
+        
+        :type row: tuple
+        :type df: pd.DataFrame
+        :return: Returns a float representing the confidence of a rating (helps produce K value)
+        :rtype: float
+        """
+
 
     def run(self, years: list[int]) -> None:
         """
@@ -103,15 +136,28 @@ class BaseModel(ABC):
         if os.path.exists(matchups_file_path):
             os.remove(matchups_file_path)
 
+        # Load the table into a pd.DataFrame
+        mask = pa_comp.and_(
+            pa_comp.equal(raw_table['pa'], 1),
+            pa_comp.equal(raw_table["gametype"], "regular"),
+        )
+        df = raw_table.filter(mask).to_pandas()
+        
+        # Convert the date field to a datetime field
+        df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
+
+        df = self.add_additional_columns(df)
+
         for year in years:
             print("-" * 15)
             print(f"Processing {year}…")
             print("-" * 15)
 
             # Pandas DF for that specific `year`
-            df_year = self._filter_year(raw_table, year)
+            df_year = df.loc[df['date'].dt.year == year]
+
             if df_year.empty or df_year is None:
-                print(f"  No data for {year}, skipping.")
+                print(f'No data for {year}, skipping.')
                 continue
 
             # Run the model for that year
@@ -142,18 +188,6 @@ class BaseModel(ABC):
             os.path.join(self._retrosheet.plays_dir, "plays.csv"),
             convert_options=convert_options,
         )
-    
-
-    def _filter_year(self, table: Any, year: int) -> pd.DataFrame:
-        """Return a pandas DataFrame containing only regular-season PAs for *year*."""
-        # Slice year from GID
-        sliced = pa_comp.utf8_slice_codeunits(table["gid"], start=3, stop=7)
-        # Apply mask to slice
-        mask = pa_comp.and_(
-            pa_comp.equal(sliced, str(year)),
-            pa_comp.equal(table["gametype"], "regular"),
-        )
-        return table.filter(mask).to_pandas()
     
 
     def _prepare_year_dataframe(
@@ -213,6 +247,8 @@ class BaseModel(ABC):
         batter_rating_post = np.empty(n)
         pitcher_rating_pre  = np.empty(n)
         pitcher_rating_post = np.empty(n)
+        batter_k_col = np.empty(n)
+        pitcher_k_col = np.empty(n)
 
         actuals = df["pa_result"].map(outcomes).to_numpy()
 
@@ -220,15 +256,22 @@ class BaseModel(ABC):
             batter = self._get_or_create_player(self._batters, row.batter)
             pitcher = self._get_or_create_player(self._pitchers, row.pitcher)
 
-            batter_delta, pitcher_delta = self.compute_rating_update(
-                batter_rating=batter.rating,
-                pitcher_rating=pitcher.rating,
+            batter_conf, pitcher_conf = self.calc_certainty(row, df)
+
+            batter_delta, pitcher_delta, batter_k, pitcher_k = self.compute_rating_update(
+                batter=batter,
+                batter_confidence=batter_conf,
+                pitcher=pitcher,
+                pitcher_confidence=pitcher_conf,
                 actual=actuals[index],
-                league_average=league_average,
+                league_average=league_average
             )
 
             batter_rating_pre[index]  = batter.rating
             pitcher_rating_pre[index] = pitcher.rating
+
+            batter_k_col[index] = batter_k
+            pitcher_k_col[index] = pitcher_k
 
             batter.rating  += batter_delta
             batter.instances += 1
@@ -241,6 +284,8 @@ class BaseModel(ABC):
         df = df.assign(
             batter_rating_pre=batter_rating_pre.round(3),
             batter_rating_post=batter_rating_post.round(3),
+            batter_k=batter_k_col.round(3),
+            pitcher_k=pitcher_k_col.round(3),
             pitcher_rating_pre=pitcher_rating_pre.round(3),
             pitcher_rating_post=pitcher_rating_post.round(3)
         )

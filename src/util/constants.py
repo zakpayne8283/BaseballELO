@@ -14,6 +14,7 @@ NEEDED_COLUMNS: list[str] = [
     "br2_post",
     "br3_post",
     "runs",
+    'pa',
     "single",
     "double",
     "triple",
@@ -24,7 +25,8 @@ NEEDED_COLUMNS: list[str] = [
     "k",
     "xi",
     "roe",
-    'iw'
+    'iw',
+    'date'
 ]
 
 OUTPUT_COLUMNS = [
@@ -35,5 +37,8 @@ OUTPUT_COLUMNS = [
     'batter_rating_pre',
     'batter_rating_post',
     'pitcher_rating_pre',
-    'pitcher_rating_post'
+    'pitcher_rating_post',
+    'batter_k',
+    'pitcher_k',
+    'date'
 ]
