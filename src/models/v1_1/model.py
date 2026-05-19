@@ -27,7 +27,7 @@ class Model1_1(BaseModel):
         row: tuple,
         df: pd.DataFrame
     ) -> tuple[float, float]:
-        # Expressed as (# PA/BF in last 90 days / (3.1 * 90days)
+        # Expressed as (# PA or BF in last 90 days / (3.1 * 90days)
         
         batter_conf = min(row.pa_last_90 / (90 * 3.1), self.max_confidence)
 

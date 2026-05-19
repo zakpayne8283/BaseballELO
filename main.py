@@ -3,7 +3,7 @@ from src.models.v1_1.model import Model1_1
 
 def main():
 
-    years = [y for y in range(1903, 2026)]
+    years = [y for y in range(2024, 2026)]
 
     # Model v1.0
     # model = Model1_0()

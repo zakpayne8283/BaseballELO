@@ -63,7 +63,8 @@ class BaseModel(ABC):
 
         self._batters: RatingsStore = {}
         self._pitchers: RatingsStore = {}
-        self._league_contexts: dict[LeagueContext] = {}
+        self._normalized_coeffs: list[dict] = []
+        self._df_norm_coeffs: pd.DataFrame = None
         self._retrosheet = Retrosheet()
 
     @abstractmethod
@@ -131,7 +132,7 @@ class BaseModel(ABC):
         raw_table = self._load_raw_retrosheet_data()
 
         matchups_file_path  = f"matchups_{self.name}.csv"
-        league_context_path = 'league_contexts.csv'
+        normalized_coeffs_path = 'normalized_coeffs.csv'
         # Start fresh each run so we don't append to a stale file.
         if os.path.exists(matchups_file_path):
             os.remove(matchups_file_path)
@@ -146,7 +147,11 @@ class BaseModel(ABC):
         # Convert the date field to a datetime field
         df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
 
+        # Add any extra columns as needed
         df = self.add_additional_columns(df)
+
+        # Load the normalized coefficients
+        self._df_norm_coeffs = pd.read_csv('normalized_coeffs.csv')
 
         for year in years:
             print("-" * 15)
@@ -176,8 +181,8 @@ class BaseModel(ABC):
             print(f"  Done — {len(df_rated):,} plate appearances.")
 
         # Write the league contexts
-        df_lg_cxt = pd.DataFrame([asdict(cxt) for cxt in self._league_contexts.values()])
-        df_lg_cxt.to_csv(league_context_path, header=True)
+        # self._normalized_coeffs = [{k:[v] for k, v in c.items()} for c in self._normalized_coeffs]
+        pd.DataFrame(self._normalized_coeffs).to_csv(normalized_coeffs_path, header=True)
 
 
     def _load_raw_retrosheet_data(self) -> Any:
@@ -230,8 +235,11 @@ class BaseModel(ABC):
             normal_coeffs[k] * v for k, v in pa_result_proportions.items()
         )
 
-        self._league_contexts[year] = LeagueContext(re_matrix, woba_coeffs, normal_coeffs, league_average)
+        normal_coeffs['year'] = year
+        normal_coeffs['normalized_avgerage_value'] = league_average
+        self._normalized_coeffs.append(normal_coeffs)
         
+        # TODO: What's being applied to df here?
         return df, normal_coeffs, league_average
     
 
