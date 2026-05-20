@@ -66,26 +66,3 @@ def compute_run_expectancy_matrix(df: pd.DataFrame) -> pd.Series:
             .mean()
             .round(3)
     )
-
-
-def apply_run_expectancy_columns(df: pd.DataFrame, re_matrix: pd.Series) -> pd.DataFrame:
-    """
-    Adds re_state_pre and re_state_post columns to df, filters out
-    terminal base-out states (24), and maps pre-state to its run expectancy.
-    """
-    df = df.copy()
-    
-    # The base/out state before the play beings
-    df['re_state_pre'] = df.apply(get_base_out_state, pre_post='pre', axis=1)
-
-    # Filter out any invalid states (only 0-23)
-    # TODO: Maybe actually handle this as an error?
-    df = df[df['re_state_pre'] != 24]
-
-    # The base/out state after the play ends
-    df['re_state_post'] = df.apply(get_base_out_state, pre_post='post', axis=1)
-
-    # The Run Expectancy before the play starts
-    df['re_pre'] = df['re_state_pre'].map(re_matrix)
-
-    return df
