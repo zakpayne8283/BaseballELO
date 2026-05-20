@@ -8,8 +8,42 @@ from src.util.common.player_record import PlayerRecord
 class Model1_1(BaseModel):
     """
     ELO model v1.1
+    Built of Model 1.0 that uses a dynamic K value based on number of "recent" plate appearances.
 
-    TODO: Write quick documentation about this model
+    **See Model 1.0 Docstring for analysis of the base formula**
+
+    The thinking behind this is that we may have a player who plays every day and we know almost exactly what to expect
+    from him in terms of performance, meaning a low K value. Comparitively, a player coming back from being on the IL
+    for 5 weeks may have more uncertainty around their performance; we have a baseline expectation, but we should be
+    prepared for some amount of rapid change.
+
+    Produces a dynamic K value based on the number of appearances (PA or BF) in the last 90 daysL
+        K = min(appearances / (90 * 3.1), self.max_confidence)
+
+    Note
+
+    Sample Outputs
+    --------------
+    davik003	verlj001	2019-06-01	other_out	1615.628	1614.013	13.878	4.000	1719.233	1719.699
+    1.
+        Parameters: 
+            Date: 2019-06-01
+            Max K: 30.0
+            Min K: 4
+            Avg: 0.163
+        Pitcher:
+            Name: Justin Verlander
+            ELO: ~1719
+            K Value: 4
+        Batter:
+            Name: Khris Davis
+            ELO: ~1615
+            K Value: 13.878
+        Results:
+            PA Result: Out (non-K) | ~0.0001
+            Batter Delta: -1.615
+            Pitcher Delta: +0.466
+    
     """
 
     name: str = "v1.1"

@@ -10,23 +10,47 @@ from src.util.common.structs import RatingsStore
 
 class BaseModel(ABC):
     """
-    Base for Batter/Pitcher ELO Model
+    Abstract base class (ABC) for Batter/Pitcher ELO Model.
+
+    Models implement this base class to ensure they have base functionality that the orchestrator expects.
+
+    Attributes
+    ----------
+    name : str
+        The friendly name of the model
+        Example: `v1.0`
+    col_prefix : str
+        The column prefix the model will use when adding columns to the output data.
+        Example: `m1_0`
+    initial_rating : float
+        The ELO rating that new players will start at. Typically 1500.
+    max_k : float
+        The maximum K value to adjust ratings by. High K values rapidly change ratings.
+    min_k : float
+        The minimum K value to adjust ratings by. Low K values slowly change ratings.
+    max_confidence : float
+        The maximum confidence level available for a rating, typically 1.0. 
+    min_confidence : float
+        The minimum confidence level available for a rating, typically 0.0.
+    ----------
+    _batters : RatingsStore
+        A dictionary for all batters encountered so far. `RatingsStore` holds current rating and number of instances.
+        Not implemented by child classes.
+    _pitchers : RatingsStore
+        A dictionary for all pitchers encountered so far. `RatingsStore` holds current rating and number of instances.
+        Not implemented by child classes.
     """
 
-    #: Readable version, e.g. "v1.0"
-    name: str
-    # Column prefix for model
-    col_prefix: str
-    #: Initial ELO for unseen player
-    initial_rating: float
-    #: Max K value for adjusting ratings
-    max_k: float
-    # Min K
-    min_k: float
-    # Max Confidence for computing K
-    max_confidence: float
-    # Min Confidence
-    min_confidence: float
+    name: str = None
+    col_prefix: str = None
+    initial_rating: float = None
+    max_k: float = None
+    min_k: float = None
+    max_confidence: float = None
+    min_confidence: float = None
+
+    _batters: RatingsStore = {}
+    _pitchers: RatingsStore = {}
 
 
     def __init__(self) -> None:
@@ -34,14 +58,9 @@ class BaseModel(ABC):
         for attr in ('name', 'col_prefix', 'initial_rating', 'max_k', 'min_k', 'max_confidence', 'min_confidence'):
             if not hasattr(self, attr):
                 raise NotImplementedError(
-                    f"{type(self).__name__} must define class attribute '{attr}'"
+                    f'Model `{type(self).__name__}` must define class attribute `{attr}`'
                 )
-
-        self._batters: RatingsStore = {}
-        self._pitchers: RatingsStore = {}
-        self._normalized_coeffs: list[dict] = []
-        self._df_norm_coeffs: pd.DataFrame = None
-
+        
     @abstractmethod
     def compute_rating_update(
         self,
@@ -53,23 +72,28 @@ class BaseModel(ABC):
         league_average: float
     ) -> tuple[float, float, float, float]:
         """
-        Compute the rating *deltas* for one plate appearance.
+        Compute the batter and pitcher rating deltas and K values for one matchup.
 
         Parameters
         ----------
-        batter_rating:
-            The batter's Elo rating before this PA.
-        pitcher_rating:
-            The pitcher's Elo rating before this PA.
+        batter : PlayerRecord
+            PlayerRecord containing the batter's current ELO and number of instances.
+        batter_confidence : float
+            Batter confidence rating, typically based on number of recent PAs and typically mutates K values.
+        pitcher : PlayerRecord
+            PlayerRecord containing the pitcher's current ELO and number of instances.
+        pitcher_confidence : float
+            Pitcher confidence rating, typically based on number of recent BF and typically mutates K values.
         actual:
-            The wOBA value of the PA outcome (normalised to [0, 1]).
+            The typical run value of the PA outcome (normalised to [0, 1]).
         league_average:
-            League-average wOBA for this season (normalised to [0, 1]).
+            League-wide average PA run value for this season (normalised to [0, 1]).
 
         Returns
         -------
-        tuple[float, float]
-            ``(batter_delta, pitcher_delta)`` — signed rating changes to apply.
+        tuple[float, float, float, float]
+            A tuple containing `(batter_delta, pitcher_delta, batter_k, pitcher_k)` following the PA result.
+
         """
 
     @abstractmethod
@@ -78,6 +102,17 @@ class BaseModel(ABC):
         df: pd.DataFrame
     ) -> pd.DataFrame:
         """
+        Adds any additional columns that the model needs to compute the deltas in each matchup. E.g. PAs in last 90 days.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The dataframe containing the base data from which the additional columns are calculated/created.
+
+        Returns
+        -------
+        pd.DataFrame
+            The base dataframe modified to contain the newly added columns.
         """
 
     @abstractmethod
@@ -86,19 +121,59 @@ class BaseModel(ABC):
         row: tuple
     ) -> tuple[float, float]:
         """
-        Docstring for calc_certainty
+        Calculates the certainty that can be applied to the ELO update calculation.
         
-        :type row: tuple
-        :type df: pd.DataFrame
-        :return: Returns a float representing the confidence of a rating (helps produce K value)
-        :rtype: float
+        Low certainty might change ELO more rapidly, high certainty might change ELO more slowly.
+
+        Example: A model might compute certainty based on number of plate
+                 apperances or batters faced over the last 90 days.
+
+        Parameters
+        ----------
+        row : tuple
+            A row which represents a single plate apperance.
+
+        Returns
+        -------
+        tuple[float, float]
+            A tuple containing `(batter_confidence, pitcher_confidence)`, typically on a continuous scale of [0, 1].
         """
 
+    def run(
+        self,
+        matchup_df : pd.DataFrame,
+        coeffs_df : pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Starts the run of a model.
+        
+        1. Creates empty np.array objects to contain the outputs from `compute_rating_update`
+        2. Determines the run values of each PA for the years provided.
+        3. Iterates over all rows in the `matchup_df`:
+            3.1. Find or create the batter and pitcher.
+            3.2. Calculate the certainty in the batter and pitcher.
+            3.3. Calculate the deltas and K values for the batter and pitcher.
+            3.4. Update the ratings in the ratings store and store the ratings for later.
+        4. Append all results to `matchup_df` and return results.
 
-    def run(self, matchup_df, coeffs_df) -> pd.DataFrame:
+        Parameters
+        ----------
+        matchup_df : pd.DataFrame
+            A dataframe containing all plate apperances for the years provided. 
+            Contains the batter, pitcher, and result of the PA.
+        coeffs_df : pd.DataFrame
+            A dataframe containing all normalized run values for all possible results.
 
+        Returns
+        -------
+        pd.DataFrame
+            A mutated version of matchup_df containing the computed ratings and K values from the model.
+        """
+
+        # Number of total PAs
         n = len(matchup_df)
 
+        # Create the output arrays
         batter_rating_pre  = np.empty(n)
         batter_rating_post = np.empty(n)
         pitcher_rating_pre  = np.empty(n)
@@ -106,7 +181,8 @@ class BaseModel(ABC):
         batter_k_col = np.empty(n)
         pitcher_k_col = np.empty(n)
 
-        print('Computing actuals...')
+        # Determine the run value for each plate apperance
+        print('Finding run values for all PAs...')
         actuals = matchup_df.merge(
             coeffs_df.melt(id_vars='year', var_name='result', value_name='value'),
             left_on=[matchup_df['date'].dt.year, 'pa_result'],
@@ -114,6 +190,7 @@ class BaseModel(ABC):
             how='left'
         )['value'].to_numpy()
 
+        # Compute the ELOs
         print('Beginning row-by-row matchups...')
         for index, row in enumerate(matchup_df.itertuples(index=False)):
 
@@ -123,9 +200,6 @@ class BaseModel(ABC):
 
             # Calculate the confidence in each
             batter_conf, pitcher_conf = self.calc_certainty(row, matchup_df)
-
-            # print(coeffs_df[coeffs_df['year'] == row.date.year]['average'].values)
-            # quit()
 
             # Run the rating update
             batter_delta, pitcher_delta, batter_k, pitcher_k = self.compute_rating_update(
@@ -137,24 +211,29 @@ class BaseModel(ABC):
                 league_average=coeffs_df[coeffs_df['year'] == row.date.year]['average'].values[0]
             )
 
+            # Store the ratings before the AB
             batter_rating_pre[index]  = batter.rating
             pitcher_rating_pre[index] = pitcher.rating
 
+            # Store the K values for the batter and pitcher
             batter_k_col[index] = batter_k
             pitcher_k_col[index] = pitcher_k
 
+            # Determine the new ratings
             batter.rating  += batter_delta
             batter.instances += 1
             pitcher.rating += pitcher_delta
             pitcher.instances += 1
 
+            # Store the new ratings
             batter_rating_post[index]  = batter.rating
             pitcher_rating_post[index] = pitcher.rating
 
-            if index % (n // 10) == 0:
+            # Show progress every 5% completed 
+            if index % (n // 5) == 0:
                 print(f"{index / n:.0%}")
 
-
+        # Compile all the calculated columns into a single dataframe        
         temp_df = pd.DataFrame()
         temp_df = temp_df.assign(
             batter_rating_pre=batter_rating_pre.round(3),
@@ -165,12 +244,27 @@ class BaseModel(ABC):
             pitcher_rating_post=pitcher_rating_post.round(3)
         ).add_prefix(f'{self.col_prefix}_')
 
+        # Add the compiled dataframe to the base dataframe
         return pd.concat([matchup_df.reset_index(drop=True), temp_df.reset_index(drop=True)], axis=1)
     
-
     def _get_or_create_player(
         self, store: RatingsStore, player_id: str
     ) -> PlayerRecord:
+        """
+        Finds or creates a player based on their Retrosheet ID (stored as `batter` or `pitcher` by Retroshet)
+
+        Parameters
+        ----------
+        store : RatingsStore
+            The dictionary where all batters or pitchers are stored
+        player_id : str
+            The Retrosheet ID of the player to look up
+
+        Returns
+        -------
+        PlayerRecord
+            Returns a `PlayerRecord` containing the player's current rating and number of instances.
+        """
         if player_id not in store:
             store[player_id] = PlayerRecord(rating=self.initial_rating)
         return store[player_id]
