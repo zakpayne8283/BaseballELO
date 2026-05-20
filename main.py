@@ -1,18 +1,17 @@
 from src.models.v1_0.model import Model1_0
 from src.models.v1_1.model import Model1_1
 
+from src.util.orchestrator import Orchestrator
+
 def main():
 
-    years = [y for y in range(2024, 2026)]
+    # TODO: Also should programtically download/create this parquet file
+    data_file_path = './data/plays/plays.parquet'
+    years = [y for y in range(1903, 2026)]
+    models = [Model1_0, Model1_1]
 
-    # Model v1.0
-    # model = Model1_0()
-    # model.run(years)
-
-    # Model v1.1
-    model = Model1_1()
-    model.run(years)
-
+    orchestrator = Orchestrator(data_file_path, years, models)
+    orchestrator.run()
 
 
 if __name__ == '__main__':

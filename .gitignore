@@ -5,6 +5,5 @@ __pycache__/
 
 *.pyc
 
-matchups*.csv
-league_contexts.csv
+elo_output.csv
 normalized_coeffs.csv

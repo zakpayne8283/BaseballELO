@@ -22,6 +22,7 @@ class Model1_0(BaseModel):
     """
 
     name: str = "v1.0"
+    col_prefix: str = 'm1_0'
     initial_rating: float = 1500.0
     max_k: float = 20.0
     min_k: float = 20.0
@@ -34,8 +35,7 @@ class Model1_0(BaseModel):
 
     def calc_certainty(
         self,
-        row: tuple,
-        df: pd.DataFrame
+        row: tuple
     ) -> tuple[float, float]:
         return self.max_confidence, self.max_confidence
         
@@ -61,6 +61,7 @@ class Model1_0(BaseModel):
         The exchange is zero-sum: every point gained by the batter is lost
         by the pitcher and vice versa.
         """
+
         elo_win_prob: float = 1.0 / (1.0 + 10.0 ** ((pitcher.rating - batter.rating) / 400.0))
         expected: float = league_average + (elo_win_prob - 0.5) * 2.0 * league_average
 
